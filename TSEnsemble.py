@@ -1,27 +1,57 @@
 from dateutil.relativedelta import relativedelta
+import joblib
 import json
 import numpy as np
 import matplotlib.pyplot as plt
 import os
 import pandas as pd
-import time
 
-import keras.backend as K
 import tensorflow as tf
-from keras.layers import Activation, Dense, Dropout, LSTM
-from keras.layers.normalization import BatchNormalization
-from keras.layers.wrappers import TimeDistributed
-from keras.models import Sequential, model_from_json
-from keras.optimizers import Adam
+import tensorflow.keras.backend as K
+from tensorflow.keras.layers import Activation, BatchNormalization, Dense, Dropout, LSTM, TimeDistributed
+from tensorflow.keras.models import Sequential, model_from_json
+from tensorflow.keras.optimizers import Adam
+
 from scipy.signal import periodogram
 from scipy.stats import pearsonr
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.externals import joblib
 from sklearn.linear_model import Ridge
 from xgboost.sklearn import XGBRegressor
 
+from typing import Any, Optional
+
+
 class TSEnsemble:
-    def __init__(self, bags=1, diff=0, epochs=15, seed=42, verbose=0):
+    """
+    Time series forecasting ensemble model.
+
+    TSEnsemble is a time series forecasting ensemble model designed to provide
+    robust predictions by combining the strengths of multiple forecasting learners.
+    This project aims to improve forecast accuracy by leveraging the diversity
+    of several underlying models.
+
+    Parameters
+    ----------
+    bags : int, default 1
+        Number of bags to use in the ensemble.
+    diff : int, default 0
+        Differencing to apply to the series.
+    epochs : int, default 15
+        Number of epochs to train the networks.
+    seed : int, default 42
+        Seed to use for the random number generator.
+    verbose : int, default 0
+        Verbosity level.
+    """
+
+    def __init__(
+        self,
+        bags: int = 1,
+        diff: int = 0,
+        epochs: int = 15,
+        seed: int = 42,
+        verbose: int = 0
+    ):
         # Raw original series
         self.series = None
         self.forecast = None
@@ -37,6 +67,7 @@ class TSEnsemble:
         self.verbose = verbose
         self.bags = bags
         self.seed = seed
+        self.epsilon = 1e-8
         self.losses = {}
         self.scores = {
             'rmse': {},
@@ -80,7 +111,26 @@ class TSEnsemble:
             }
         }
 
-    def set_params(self, base_params, meta_params):
+    def set_params(
+        self, 
+        base_params: dict, 
+        meta_params: dict
+    ) -> tuple:
+        """
+        Set the parameters for the ensemble model.
+
+        Parameters
+        ----------
+        base_params : dict
+            Parameters for the base model.
+        meta_params : dict
+            Parameters for the meta models.
+        
+        Returns
+        -------
+        tuple
+            Number of networks, number of forecasts and maximum sequence length.
+        """
         for key, val in base_params.items():
             self.base_params[key] = val
 
@@ -103,7 +153,29 @@ class TSEnsemble:
 
         return self.networks, self.num_fc, self.max_sl
 
-    def init_series(self, data, hold_split=.2, test_split=.2):
+    def init_series(
+        self, 
+        data: pd.Series, 
+        hold_split: float = .2, 
+        test_split: float = .2
+    ) -> tuple:
+        """
+        Initialize the series for the ensemble model.
+
+        Parameters
+        ----------
+        data : pd.Series
+            Time series to use for the ensemble.
+        hold_split : float, default .2
+            Hold split for the ensemble.
+        test_split : float, default .2
+            Test split for the ensemble.
+        
+        Returns
+        -------
+        tuple
+            Train, meta and test splits.
+        """
         self.series = data.copy()
 
         if self.diff > 0:
@@ -125,7 +197,23 @@ class TSEnsemble:
 
         return self.dtrain, self.dmeta, self.dtest
 
-    def init_forecast(self, data=None):
+    def init_forecast(
+        self, 
+        data: pd.Series = None
+    ) -> pd.Series:
+        """
+        Initialize forecast data series for prediction.
+
+        Parameters
+        ----------
+        data : pd.Series, default None
+            Forecast data series for prediction.
+        
+        Returns
+        -------
+        pd.Series
+            Transformed data series suited for prediction.
+        """
         if data is None:
             data = self.series[-(self.max_sl + self.diff):]
 
@@ -138,12 +226,47 @@ class TSEnsemble:
 
         return self.dfc
 
-    def diff_transform(self, data):
+    def diff_transform(
+        self,
+        data: pd.Series
+    ) -> pd.Series:
+        """
+        Apply differencing to the series.
+
+        Parameters
+        ----------
+        data : pd.Series
+            Data series to apply differencing.
+        
+        Returns
+        -------
+        pd.Series
+            Differenced data series.
+        """
         data = data - data.shift(self.diff)
 
         return data[self.diff:].dropna()
 
-    def diff_reverse(self, data, window):
+    def diff_reverse(
+        self,
+        data: pd.Series,
+        window: pd.Series
+    ) -> pd.Series:
+        """
+        Reverse differencing to the series.
+
+        Parameters
+        ----------
+        data : pd.Series
+            Data series to reverse differencing.
+        window : pd.Series
+            Window series to add to the data series.
+        
+        Returns
+        -------
+        pd.Series
+            Reverse differenced data series.
+        """
         data = window[:self.diff].add(data, fill_value=0)
 
         for i, val in enumerate(data):
@@ -152,17 +275,77 @@ class TSEnsemble:
 
         return data[self.diff:].dropna()
 
-    def norm_transform(self, data):
+    def norm_transform(
+        self,
+        data: pd.Series
+    ) -> pd.Series:
+        """
+        Normalize the series.
+
+        Parameters
+        ----------
+        data : pd.Series
+            Data series to normalize.
+        
+        Returns
+        -------
+        pd.Series
+            Normalized data series.
+        """
         if self.mean is None or self.std is None:
             self.mean = data.mean()
             self.std = data.std()
         
         return (data - self.mean) / self.std
 
-    def norm_reverse(self, data):
+    def norm_reverse(
+        self,
+        data: pd.Series
+    ) -> pd.Series:
+        """
+        Reverse normalization to the series.
+
+        Parameters
+        ----------
+        data : pd.Series
+            Data series to reverse normalization.
+        
+        Returns
+        -------
+        pd.Series
+            Reverse normalized data series.
+        """
         return (data * self.std) + self.mean
 
-    def get_fourier_lags(self, data, n=5, min=1, max=1000):
+    def get_fourier_lags(
+        self,
+        data: pd.Series,
+        n: int = 5,
+        min: int = 1,
+        max: int = 1000
+    ) -> np.ndarray:
+        """
+        Get the Fourier lags for the series. The Fourier lags are the lags that have the highest
+        power spectral density in the Fourier transform of the series. The number of lags to get
+        can be specified, as well as the minimum and maximum lags to consider. This is useful to get
+        the best sequence length for the LSTM networks.
+
+        Parameters
+        ----------
+        data : pd.Series
+            Data series to get the Fourier lags.
+        n : int, default 5
+            Number of Fourier lags to get.
+        min : int, default 1
+            Minimum Fourier lag to get.
+        max : int, default 1000
+            Maximum Fourier lag to get.
+        
+        Returns
+        -------
+        np.ndarray
+            Fourier lags for the series.
+        """
         frec, spec = periodogram(data)
         
         df = pd.DataFrame({'freq': frec, 'spec': spec}).sort_values(by='spec', ascending=False)
@@ -177,17 +360,72 @@ class TSEnsemble:
         lags = lags[:n]
         
         if len(lags) < n:
-            print('Warning: Too little Fourier sequences available')
+            print('Warning: Too little Fourier sequences available.')
         
         return lags
 
-    def get_rmse(self, true, pred):
+    def get_rmse(
+        self,
+        true: pd.Series,
+        pred: pd.Series
+    ) -> float:
+        """
+        Get the Root Mean Square Error (RMSE) of the true and predicted series.
+
+        Parameters
+        ----------
+        true : pd.Series
+            True series to get the RMSE.
+        pred : pd.Series
+            Predicted series to get the RMSE.
+        
+        Returns
+        -------
+        float
+            Root Mean Square Error of the true and predicted series.
+        """
         return np.sqrt(np.mean((true - pred) ** 2))
 
-    def get_mape(self, true, pred):
+    def get_mape(
+        self,
+        true: pd.Series,
+        pred: pd.Series
+    ) -> float:
+        """
+        Get the Mean Absolute Percentage Error (MAPE) of the true and predicted series.
+
+        Parameters
+        ----------
+        true : pd.Series
+            True series to get the MAPE.
+        pred : pd.Series
+            Predicted series to get the MAPE.
+        
+        Returns
+        -------
+        float
+            Mean Absolute Percentage Error of the true and predicted series.
+        """
         return np.mean(np.abs((true - pred) / true)) * 100
 
-    def get_mean_corr(self, preds=None):
+    def get_mean_corr(
+        self,
+        preds: list = None
+    ) -> float:
+        """
+        Get the mean correlation of the predicted series. This is useful to check if the models are
+        diverse enough to be used in the ensemble.
+
+        Parameters
+        ----------
+        preds : list, default None
+            List of predicted series to get the mean correlation.
+        
+        Returns
+        -------
+        float
+            Mean correlation of the predicted series.
+        """
         if preds is None:
             preds = self.meta_pred
 
@@ -204,7 +442,26 @@ class TSEnsemble:
 
         return np.mean(corrs)
 
-    def series_to_seq(self, series, sl):
+    def series_to_seq(
+        self,
+        series: pd.Series,
+        sl: int
+    ) -> np.ndarray:
+        """
+        Convert the series to a sequence of the specified length.
+
+        Parameters
+        ----------
+        series : pd.Series
+            Series to convert to a sequence.
+        sl : int
+            Length of the sequence.
+        
+        Returns
+        -------
+        np.ndarray
+            Sequence of the series.
+        """
         seq = []
 
         for i in range(len(series) - sl + 1):
@@ -214,12 +471,50 @@ class TSEnsemble:
 
         return seq
 
-    def series_to_fc(self, series, sl):
+    def series_to_fc(
+        self,
+        series: pd.Series,
+        sl: int
+    ) -> np.ndarray:
+        """
+        Convert the series to a forecast of the specified length.
+
+        Parameters
+        ----------
+        series : pd.Series
+            Series to convert to a forecast.
+        sl : int
+            Length of the forecast.
+        
+        Returns
+        -------
+        np.ndarray
+            Forecast of the series.
+        """
         fc = series[-sl:].values
 
         return fc
 
-    def seq_to_series(self, y_pred, y_true=None):
+    def seq_to_series(
+        self,
+        y_pred: np.ndarray,
+        y_true: pd.Series = None
+    ) -> tuple:
+        """
+        Convert the predicted sequences to a series.
+
+        Parameters
+        ----------
+        y_pred : np.ndarray
+            Predicted sequences to convert to a series.
+        y_true : pd.Series, default None
+            True series to convert to a series.
+        
+        Returns
+        -------
+        tuple
+            Predicted and true data series.
+        """
         if not y_true:
             y_true = self.test_true
         
@@ -244,7 +539,23 @@ class TSEnsemble:
 
         return s_pred, s_true
 
-    def fc_to_series(self, y_fc):
+    def fc_to_series(
+        self,
+        y_fc: np.ndarray
+    ) -> pd.Series:
+        """
+        Convert the predicted forecasts to a series.
+
+        Parameters
+        ----------
+        y_fc : np.ndarray
+            Predicted forecasts to convert to a series.
+        
+        Returns
+        -------
+        pd.Series
+            Predicted series of the forecasts.
+        """
         idx = np.array([self.dfc.index[-1] + relativedelta(days=(i + 1)) for i in range(0, self.num_fc)])
         window = self.forecast[(self.dfc.index[-1] - relativedelta(days=(self.diff - 1))):][:self.diff]
 
@@ -254,7 +565,26 @@ class TSEnsemble:
 
         return s_fc
 
-    def get_scores(self, y_pred, y_true=None):
+    def get_scores(
+        self,
+        y_pred: np.ndarray,
+        y_true: pd.Series = None
+    ) -> dict:
+        """
+        Get the scores of the predicted series.
+
+        Parameters
+        ----------
+        y_pred : np.ndarray
+            Predicted series to get the scores.
+        y_true : pd.Series, default None
+            True series to get the scores.
+        
+        Returns
+        -------
+        dict
+            Scores (RMSE and MAPE) of the predicted series.
+        """
         s_pred, s_true = self.seq_to_series(y_pred, y_true)
         scores = {'rmse': .0, 'mape': .0}
 
@@ -268,12 +598,28 @@ class TSEnsemble:
 
         return scores
 
-    def get_models(self):
+    def get_models(self) -> list:
+        """
+        Get the names of the models.
+
+        Returns
+        -------
+        list
+            Names of the models.
+        """
         names = list(self.scores['rmse'].keys())
 
         return names
 
-    def best_model(self):
+    def best_model(self) -> tuple:
+        """
+        Get the best model based on the RMSE and MAPE scores.
+
+        Returns
+        -------
+        tuple
+            Name and scores of the best model.
+        """
         name = None
         scores = {'rmse': np.Inf, 'mape': np.Inf}
 
@@ -285,7 +631,20 @@ class TSEnsemble:
 
         return name, scores
 
-    def best_pred(self, idx=None):
+    def best_pred(self, idx: int = None) -> pd.Series:
+        """
+        Get the best predicted series based on the RMSE and MAPE scores.
+
+        Parameters
+        ----------
+        idx : int, default None
+            Index of the predicted series to get.
+        
+        Returns
+        -------
+        pd.Series
+            Best predicted series.
+        """
         name, _ = self.best_model()
 
         y_fc = self.test_pred[name]
@@ -296,7 +655,15 @@ class TSEnsemble:
 
         return s_fc
 
-    def best_forecast(self):
+    def best_forecast(self) -> pd.Series:
+        """
+        Get the best forecast based on the RMSE and MAPE scores.
+
+        Returns
+        -------
+        pd.Series
+            Best forecast.
+        """
         name, _ = self.best_model()
 
         y_fc = self.fc_pred[name]
@@ -304,7 +671,15 @@ class TSEnsemble:
 
         return s_fc
 
-    def get_meta_train(self):
+    def get_meta_train(self) -> tuple:
+        """
+        Get training data for the meta learners.
+
+        Returns
+        -------
+        tuple
+            Training features and target.
+        """
         x_train = np.array(list(self.meta_pred.values()))
         x_train = x_train.reshape(x_train.shape[0], (x_train.shape[1] * x_train.shape[2])).transpose()
 
@@ -313,18 +688,57 @@ class TSEnsemble:
 
         return x_train, y_train
 
-    def get_meta_test(self):
+    def get_meta_test(self) -> tuple:
+        """
+        Get testing data for the meta learners.
+
+        Returns
+        -------
+        tuple
+            Testing features and target.
+        """
         x_test = np.array(list(self.test_pred.values()))[:self.networks]
         x_test = x_test.reshape(x_test.shape[0], (x_test.shape[1] * x_test.shape[2])).transpose()
 
         return x_test
 
-    def get_meta_forecast(self):
+    def get_meta_forecast(self) -> np.ndarray:
+        """
+        Get forecast data for the meta learners.
+
+        Returns
+        -------
+        np.ndarray
+            Forecast features data for prediction.
+        """
         x_fc = np.array(list(self.fc_pred.values()))[:self.networks].transpose()
 
         return x_fc
 
-    def base_build_model(self, nn, hl, lr):
+    def base_build_model(
+        self,
+        nn: int,
+        hl: int,
+        lr: float
+    ) -> Sequential:
+        """
+        Build a base model, which will be repeatedly fitted in the ensemble
+        with different configurations, in order to generate diverse predictions.
+
+        Parameters
+        ----------
+        nn : int
+            Number of neurons in each LSTM layer.
+        hl : int
+            Number of hidden layers.
+        lr : float
+            Learning rate.
+        
+        Returns
+        -------
+        Sequential
+            Model to be used in the base fittings.
+        """
         model = Sequential()
 
         model.add(LSTM(nn, return_sequences=True, input_shape=(None, 1)))
@@ -341,11 +755,42 @@ class TSEnsemble:
         model.add(TimeDistributed(Dense(1)))
         model.add(Activation('linear'))
 
-        model.compile(loss='mse', optimizer=Adam(lr=lr), sample_weight_mode='temporal')
+        model.compile(
+            loss='mse',
+            optimizer=Adam(learning_rate=lr),
+            sample_weight_mode='temporal'
+        )
 
         return model
 
-    def meta_build_model(self, key, seed):
+    def meta_build_model(
+        self,
+        key: str,
+        seed: int
+    ) -> RandomForestRegressor | Ridge | XGBRegressor:
+        """
+        The ensemble model incorporates three distinct meta regressors by default,
+        each designed to identify and leverage various relationships within the dataset:
+
+        - ``Random Forest`` :
+            Utilizes tree-based learning to handle non-linear data effectively.
+        - ``Ridge`` :
+            Linear regression with L2 regularization to capture linear relationships and manage multicollinearity.
+        - ``XGBoost`` :
+            Gradient boosting regressor designed to optimize both bias and variance, suitable for complex pattern identification.
+
+        Parameters
+        ----------
+        key : str
+            Name of the meta model to build.
+        seed : int
+            Seed to use for the meta model.
+        
+        Returns
+        -------
+        RandomForestRegressor | Ridge | XGBRegressor
+            Meta model to be used in the ensemble.
+        """
         model = None
 
         if key == 'rf':
@@ -374,11 +819,44 @@ class TSEnsemble:
 
         return model
 
-    def model_train(self, data=None, hold_split=.2, test_split=.2):
+    def model_train(
+        self,
+        data: pd.Series = None,
+        hold_split: float = .2,
+        test_split: float = .2
+    ) -> None:
+        """
+        Train the ensemble model:
+
+            - ``Initialization`` :
+                The data series is normalized and split into three distinct sets: training, meta, and testing.
+            - ``Base Models Training`` :
+                Multiple configurations of recurrent neural networks (RNNs) are trained on the training set.
+                This diversity in base models helps in capturing various patterns in the data.
+                Each configuration is trained a number of times (bags) and the final predictions
+                are averaged in order to reduce the variance.
+            - ``Meta Predictions Generation`` :
+                Each trained base model makes predictions on the meta set.
+                These predictions are then used as features to train the meta models.
+            - ``Meta Models Training`` :
+                Meta models, which can be different types of regression models, are trained
+                on the predictions from the base models.
+                This step aims to combine the strengths of each base model to improve overall prediction accuracy.
+
+        Parameters
+        ----------
+        data : pd.Series, default None
+            Series to train the ensemble model.
+        hold_split : float, default .2
+            Split to use for the hold/meta set.
+        test_split : float, default .2
+            Split to use for model evaluation.
+        """
+        # Initialization
         if data:
             self.init_series(data, hold_split, test_split)
 
-        # Fit RNNs
+        # Base Models Training
         for sl in self.base_params['sl']:
             for hl in self.base_params['hl']:
                 for lr in self.base_params['lr']:
@@ -387,7 +865,7 @@ class TSEnsemble:
                         print('Fitting {}...'.format(name))
                     self.losses[name] = self.base_train(self.dtrain, sl, hl, lr)
 
-        # Predict RNNs meta data
+        # Meta Predictions Generation
         for sl in self.base_params['sl']:
             for hl in self.base_params['hl']:
                 for lr in self.base_params['lr']:
@@ -396,15 +874,25 @@ class TSEnsemble:
                         print('Processing {}...'.format(name))
                     self.meta_pred[name], self.meta_true = self.base_test(self.dmeta, sl, hl, lr)
 
-        # Fit Metas
+        # Meta Models Training
         for key in list(self.meta_params.keys()):
             name = self.meta_name(key)
             if self.verbose > 0:
                 print('Fitting {}...'.format(name))
             self.meta_train(key)
 
-    def model_test(self):
-        # Test RNNs
+    def model_test(self) -> None:
+        """
+        Evaluate the scores for all members of the ensemble model:
+
+            - ``Base Models Scores`` :
+                For each base configuration, make predictions from the test set.
+            - ``Base Models Mean Scores`` :
+                Make predictions from the mean of the base configurations.
+            - ``Meta Models Scores`` :
+                For each meta learner, make predictions.
+        """
+        # Base Models Scores
         for sl in self.base_params['sl']:
             for hl in self.base_params['hl']:
                 for lr in self.base_params['lr']:
@@ -416,7 +904,7 @@ class TSEnsemble:
                     for i in self.scores.keys():
                         self.scores[i][name] = scores[i]
 
-        # Test RNNs Mean
+        # Base Models Mean Scores
         name = 'base_mean'
         if self.verbose > 0:
             print('Testing {}...'.format(name))
@@ -425,7 +913,7 @@ class TSEnsemble:
         for i in self.scores.keys():
             self.scores[i][name] = scores[i]
 
-        # Test Metas
+        # Meta Models Scores
         for key in list(self.meta_params.keys()):
             name = self.meta_name(key)
             if self.verbose > 0:
@@ -435,10 +923,23 @@ class TSEnsemble:
             for i in self.scores.keys():
                 self.scores[i][name] = scores[i]
 
-    def model_forecast(self, data=None):
+    def model_forecast(self, data: pd.Series = None) -> None:
+        """
+        Forecast the ensemble model, which consists of the following steps:
+
+            - ``Initialization`` :
+                The forecast data is prepared and normalized.
+            - ``Base Models Forecasting`` :
+                Each base model configuration is used to make predictions on the forecast data.
+            - ``Base Models Mean Forecasting`` :
+                Predictions are made by averaging the results of each base model configuration.
+            - ``Meta Models Forecasting`` :
+                The predictions from the base models are then used as input to the meta models, which generate the final forecast.
+        """
+        # Initialization
         self.init_forecast(data)
 
-        # Forecast RNNs for meta learners
+        # Base Models Forecasting
         for sl in self.base_params['sl']:
             for hl in self.base_params['hl']:
                 for lr in self.base_params['lr']:
@@ -447,20 +948,48 @@ class TSEnsemble:
                         print('Forecasting {}...'.format(name))
                     self.fc_pred[name] = self.base_forecast(self.dfc, sl, hl, lr)
 
-        # Forecast RNNs Mean
+        # Base Models Mean Forecasting
         name = 'base_mean'
         if self.verbose > 0:
             print('Forecasting {}...'.format(name))
         self.fc_pred[name] = self.mean_forecast()
 
-        # Forecast Metas
+        # Meta Models Forecasting
         for key in list(self.meta_params.keys()):
             name = self.meta_name(key)
             if self.verbose > 0:
                 print('Forecasting {}...'.format(name))
             self.fc_pred[name] = self.meta_forecast(key)
 
-    def base_train(self, data, sl, hl, lr):
+    def base_train(
+        self,
+        data: pd.Series,
+        sl: int,
+        hl: int,
+        lr: float
+    ) -> list:
+        """
+        Train a base model with the given configuration.
+
+        For each base model configuration, fit the model a number of times (bags). This is useful
+        to capture diverse predictions, which will help us to make a better forecast.
+
+        Parameters
+        ----------
+        data : pd.Series
+            Series to train the model.
+        sl : int
+            Number of neurons in each LSTM layer.
+        hl : int
+            Number of hidden layers.
+        lr : float
+            Learning rate.
+        
+        Returns
+        -------
+        list
+            Loss values for each epoch.
+        """
         num_fc = sl
         nn = sl
 
@@ -477,7 +1006,8 @@ class TSEnsemble:
             seed = self.seed + i
             np.random.seed(seed)
             K.clear_session()
-            tf.set_random_seed(seed)
+            K.set_epsilon(self.epsilon)
+            tf.random.set_seed(self.seed)
 
             np.random.shuffle(seq)
             x_train = seq[:, :sl].reshape(seq.shape[0], sl, 1)
@@ -502,11 +1032,39 @@ class TSEnsemble:
 
         np.random.seed(self.seed)
         K.clear_session()
-        tf.set_random_seed(self.seed)
+        K.set_epsilon(self.epsilon)
+        tf.random.set_seed(self.seed)
 
         return loss
 
-    def base_test(self, data, sl, hl, lr):
+    def base_test(
+        self,
+        data: pd.Series,
+        sl: int,
+        hl: int,
+        lr: float
+    ) -> tuple:
+        """
+        Test a base model with the given configuration.
+
+        For each base model configuration, make a prediction for each previously trained bag.
+
+        Parameters
+        ----------
+        data : pd.Series
+            Series to test the model.
+        sl : int
+            Number of neurons in each LSTM layer.
+        hl : int
+            Number of hidden layers.
+        lr : float
+            Learning rate.
+        
+        Returns
+        -------
+        tuple
+            Predicted meta data and true meta data.
+        """
         seq = self.series_to_seq(data, self.max_sl)
 
         x_pred = seq[:, -(sl + self.num_fc):-self.num_fc].reshape(seq.shape[0], sl, 1)
@@ -525,7 +1083,34 @@ class TSEnsemble:
 
         return y_pred, y_true
 
-    def base_forecast(self, data, sl, hl, lr):
+    def base_forecast(
+        self,
+        data: pd.Series,
+        sl: int,
+        hl: int,
+        lr: float
+    ) -> np.ndarray:
+        """
+        Forecast new predictions using the given base model configuration.
+
+        For each base model configuration, make a prediction for each previously trained bag.
+
+        Parameters
+        ----------
+        data : pd.Series
+            Series to forecast.
+        sl : int
+            Number of neurons in each LSTM layer.
+        hl : int
+            Number of hidden layers.
+        lr : float
+            Learning rate.
+        
+        Returns
+        -------
+        np.ndarray
+            Predicted meta data.
+        """
         fc = self.series_to_fc(data, sl)
 
         x_fc = fc.reshape(1, sl, 1)
@@ -543,7 +1128,23 @@ class TSEnsemble:
 
         return y_fc
 
-    def mean_test(self, keys=None):
+    def mean_test(
+        self,
+        keys: Optional[list] = None
+    ) -> np.ndarray:
+        """
+        Get the mean test values of each of the given base model bags.
+
+        Parameters
+        ----------
+        keys : list, optional
+            Names of the base models to get the mean test values.
+        
+        Returns
+        -------
+        np.ndarray
+            Mean test values.
+        """
         if keys is None:
             keys = self.test_pred.keys()
 
@@ -559,7 +1160,23 @@ class TSEnsemble:
 
         return y_pred
 
-    def mean_forecast(self, name=None, keys=None):
+    def mean_forecast(
+        self,
+        keys: Optional[list] = None
+    ) -> np.ndarray:
+        """
+        Get the mean forecast values of each of the given base model bags.
+
+        Parameters
+        ----------
+        keys : list, optional
+            Names of the base models to get the mean forecast values.
+        
+        Returns
+        -------
+        np.ndarray
+            Mean forecast values.
+        """
         if keys is None:
             keys = self.fc_pred.keys()
 
@@ -573,7 +1190,18 @@ class TSEnsemble:
 
         return y_fc
 
-    def meta_train(self, key):
+    def meta_train(
+        self,
+        key: str
+    ) -> None:
+        """
+        Train the specified meta model.
+
+        Parameters
+        ----------
+        key : str
+            Name of the meta model.
+        """
         x_train, y_train = self.get_meta_train()
 
         for i in range(0, self.bags):
@@ -590,7 +1218,18 @@ class TSEnsemble:
 
         np.random.seed(self.seed)
 
-    def meta_test(self, key):
+    def meta_test(
+        self,
+        key: str
+    ) -> None:
+        """
+        Test the specified meta model.
+
+        Parameters
+        ----------
+        key : str
+            Name of the meta model.
+        """
         x_test = self.get_meta_test()
 
         n_seq = len(self.test_true)
@@ -608,7 +1247,23 @@ class TSEnsemble:
 
         return y_pred
 
-    def meta_forecast(self, key):
+    def meta_forecast(
+        self,
+        key: str
+    ) -> np.ndarray:
+        """
+        Forecast new predictions using the specified meta model.
+
+        Parameters
+        ----------
+        key : str
+            Name of the meta model.
+        
+        Returns
+        -------
+        np.ndarray
+            Predicted data.
+        """
         x_fc = self.get_meta_forecast()
         y_fc = np.zeros(self.num_fc)
 
@@ -624,7 +1279,62 @@ class TSEnsemble:
 
         return y_fc
 
-    def plot_train(self, title=None, losses=None, show=True, file=None):
+    def plot_data(
+        self,
+        data: pd.Series,
+        title: Optional[str] = None,
+        show: bool = True,
+        file: Optional[str] = None
+    ) -> None:
+        """
+        Plot the data series.
+
+        Parameters
+        ----------
+        data : pd.Series
+            Series to plot.
+        title : str, optional
+            Title of the plot.
+        show : bool, default True
+            Whether to show the plot.
+        file : str, optional
+            File to save the plot to.
+        """
+        if title is None:
+            title = 'Data'
+
+        fig, ax = plt.subplots(figsize=(10, 5))
+
+        ax.plot(data)
+
+        ax.set_title(title)
+
+        if show:
+            plt.show()
+        if file:
+            fig.savefig(self.get_path(file))
+
+    def plot_train(
+        self,
+        title: Optional[str] = None,
+        losses: Optional[dict] = None,
+        show: bool = True,
+        file: Optional[str] = None
+    ) -> None:
+        """
+        Plot the training loss values.
+
+        Parameters
+        ----------
+        title : str, optional
+            Title of the plot.
+        losses : dict, optional
+            Loss values to plot.
+        show : bool, default True
+            Whether to show the plot.
+        file : str, optional
+            File to save the plot to.
+        """
         if title is None:
             title = 'Train'
 
@@ -652,9 +1362,29 @@ class TSEnsemble:
         if file:
             fig.savefig(self.get_path(file))
 
-    def plot_test(self, title=None, score='rmse', show=True, file=None):
+    def plot_test(
+        self,
+        title: Optional[str] = None,
+        score: str = 'rmse',
+        show: bool = True,
+        file: Optional[str] = None
+    ) -> None:
+        """
+        Plot the test scores of each of the given base model bags.
+
+        Parameters
+        ----------
+        title : str, optional
+            Title of the plot.
+        score : str, default 'rmse'
+            Score to plot.
+        show : bool, default True
+            Whether to show the plot.
+        file : str, optional
+            File to save the plot to.
+        """
         if title is None:
-            title = 'Test'
+            title = 'Scores by Model (RMSE | MAPE)'
 
         colors = plt.get_cmap('tab20')
         labels = []
@@ -679,7 +1409,33 @@ class TSEnsemble:
         if file:
             fig.savefig(self.get_path(file))
 
-    def plot_forecast(self, title=None, keys=None, forecast=False, zoom=1, show=True, file=None):
+    def plot_forecast(
+        self,
+        title: Optional[str] = None,
+        keys: Optional[list] = None,
+        forecast: bool = False,
+        zoom: int = 1,
+        show: bool = True,
+        file: Optional[str] = None
+    ) -> None:
+        """
+        Plot the forecast values of each of the given base model bags.
+
+        Parameters
+        ----------
+        title : str, optional
+            Title of the plot.
+        keys : list, optional
+            Names of the base models to plot.
+        forecast : bool, default False
+            Whether to plot the forecast values.
+        zoom : int, default 1
+            Zoom factor.
+        show : bool, default True
+            Whether to show the plot.
+        file : str, optional
+            File to save the plot to.
+        """
         if title is None:
             title = 'Forecast'
 
@@ -716,10 +1472,13 @@ class TSEnsemble:
         if file:
             fig.savefig(self.get_path(file))
 
-    def get_path(self, name):
-        return '{}/files/ensemble/{}'.format(os.getcwd(), name)
+    def get_path(self, name: str) -> str:
+        if not os.path.exists('{}/files'.format(os.getcwd())):
+            os.makedirs('{}/files'.format(os.getcwd()))
 
-    def rnn_name(self, sl, hl, lr, i=-1):
+        return '{}/files/{}'.format(os.getcwd(), name)
+
+    def rnn_name(self, sl: int, hl: int, lr: float, i: int = -1) -> str:
         name = 'base'
 
         if len(self.base_params['sl']) > 1:
@@ -733,17 +1492,17 @@ class TSEnsemble:
 
         return name
 
-    def rnn_is_model(self, name):
+    def rnn_is_model(self, name: str) -> bool:
         return os.path.isfile(self.get_path('{}_model.json'.format(name)))
 
-    def rnn_save_model(self, model, name):
+    def rnn_save_model(self, model: Sequential, name: str) -> None:
         content = model.to_json()
         with open(self.get_path('{}_model.json'.format(name)), 'w') as fh:
             fh.write(content)
         
         model.save_weights(self.get_path('{}_weights.h5'.format(name)))
 
-    def rnn_load_model(self, name):
+    def rnn_load_model(self, name: str) -> Sequential:
         with open(self.get_path('{}_model.json'.format(name)), 'r') as fh:
             content = fh.read()
         model = model_from_json(content)
@@ -752,19 +1511,19 @@ class TSEnsemble:
 
         return model
 
-    def rnn_save_history(self, history, name):
+    def rnn_save_history(self, history: dict, name: str) -> None:
         content = json.dumps(history)
         with open(self.get_path('{}_history.json'.format(name)), 'w') as fh:
             fh.write(content)
 
-    def rnn_load_history(self, name):
+    def rnn_load_history(self, name: str) -> dict:
         with open(self.get_path('{}_history.json'.format(name)), 'r') as fh:
             content = fh.read()
         history = json.loads(content)
 
         return history
 
-    def meta_name(self, key, i=-1):
+    def meta_name(self, key: str, i: int = -1) -> str:
         name = 'meta' + '_' + key
 
         if i >= 0:
@@ -772,11 +1531,11 @@ class TSEnsemble:
 
         return name
 
-    def meta_is_model(self, name):
+    def meta_is_model(self, name: str) -> bool:
         return os.path.isfile(self.get_path('{}_model.pml'.format(name)))
 
-    def meta_save_model(self, model, name):
+    def meta_save_model(self, model: Any, name: str) -> None:
         joblib.dump(model, self.get_path('{}_model.pml'.format(name)))
 
-    def meta_load_model(self, name):
+    def meta_load_model(self, name: str) -> Any:
         return joblib.load(self.get_path('{}_model.pml'.format(name)))

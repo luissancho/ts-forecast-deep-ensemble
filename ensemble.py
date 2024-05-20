@@ -19,12 +19,12 @@ SEED = 42
 np.random.seed(SEED)
 
 # Set currency
-currency = 'clp'
+currency = 'cop'
 
 # Set params
 base_params = {
     'sl': [60, 70, 80],
-    'hl': [2],
+    'hl': [2, 3],
     'lr': [.01]
 }
 meta_params = {
@@ -42,7 +42,9 @@ meta_params = {
 }
 diff = 1
 bags = 3
-epochs = 100
+epochs = 30
+hold_split = .3
+test_split = .3
 verbose = 2
 
 # Set series range
@@ -52,7 +54,7 @@ dt_to = '2018-11-27'
 print('START')
 
 # Read data
-df = pd.read_csv('{}/files/{}'.format(os.getcwd(), 'data-fx.csv'), sep=',')
+df = pd.read_csv(f'{os.getcwd()}/docs/sample-fx.csv', sep=',')
 
 # Parse currency and set time series
 y = df[df['currency'] == currency.upper()].drop(['currency'], axis=1).fillna(0).set_index('rated_at').rename_axis(None)
@@ -65,7 +67,7 @@ print('Total: {:d}'.format(len(y)))
 model = TSEnsemble(bags=bags, diff=diff, epochs=epochs, seed=SEED, verbose=verbose)
 
 networks, num_fc, max_sl = model.set_params(base_params, meta_params)
-dtrain, dmeta, dtest = model.init_series(y, hold_split=.2, test_split=.3)
+dtrain, dmeta, dtest = model.init_series(y, hold_split=hold_split, test_split=test_split)
 
 print('Networks: {:d} | Forecast: {:d} | Maxlen: {:d}'.format(networks, num_fc, max_sl))
 print('Train: {:d} | Meta: {:d} | Test: {:d}'.format(len(dtrain), len(dmeta), len(dtest)))

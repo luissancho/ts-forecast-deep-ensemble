@@ -6,16 +6,11 @@ import matplotlib.pyplot as plt
 import os
 import pandas as pd
 
-import tensorflow as tf
-import tensorflow.keras.backend as K
-from tensorflow.keras.layers import Activation, BatchNormalization, Dense, Dropout, LSTM, TimeDistributed
-from tensorflow.keras.models import Sequential, model_from_json
-from tensorflow.keras.optimizers import Adam
-
 from scipy.signal import periodogram
 from scipy.stats import pearsonr
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import Ridge
+import tensorflow as tf
 from xgboost.sklearn import XGBRegressor
 
 from typing import Any, Optional
@@ -720,7 +715,7 @@ class TSEnsemble:
         nn: int,
         hl: int,
         lr: float
-    ) -> Sequential:
+    ) -> tf.keras.models.Sequential:
         """
         Build a base model, which will be repeatedly fitted in the ensemble
         with different configurations, in order to generate diverse predictions.
@@ -739,25 +734,25 @@ class TSEnsemble:
         Sequential
             Model to be used in the base fittings.
         """
-        model = Sequential()
+        model = tf.keras.models.Sequential()
 
-        model.add(LSTM(nn, return_sequences=True, input_shape=(None, 1)))
-        model.add(BatchNormalization())
-        model.add(Activation('relu'))
-        model.add(Dropout(.2))
+        model.add(tf.keras.layers.LSTM(nn, return_sequences=True, input_shape=(None, 1)))
+        model.add(tf.keras.layers.BatchNormalization())
+        model.add(tf.keras.layers.Activation('relu'))
+        model.add(tf.keras.layers.Dropout(.2))
 
         for i in range(hl):
-            model.add(LSTM(nn, return_sequences=True))
-            model.add(BatchNormalization())
-            model.add(Activation('relu'))
-            model.add(Dropout(.2))
+            model.add(tf.keras.layers.LSTM(nn, return_sequences=True))
+            model.add(tf.keras.layers.BatchNormalization())
+            model.add(tf.keras.layers.Activation('relu'))
+            model.add(tf.keras.layers.Dropout(.2))
 
-        model.add(TimeDistributed(Dense(1)))
-        model.add(Activation('linear'))
+        model.add(tf.keras.layers.TimeDistributed(tf.keras.layers.Dense(1)))
+        model.add(tf.keras.layers.Activation('linear'))
 
         model.compile(
             loss='mse',
-            optimizer=Adam(learning_rate=lr),
+            optimizer=tf.keras.optimizers.Adam(learning_rate=lr),
             sample_weight_mode='temporal'
         )
 
@@ -1005,8 +1000,8 @@ class TSEnsemble:
 
             seed = self.seed + i
             np.random.seed(seed)
-            K.clear_session()
-            K.set_epsilon(self.epsilon)
+            tf.keras.backend.clear_session()
+            tf.keras.backend.set_epsilon(self.epsilon)
             tf.random.set_seed(self.seed)
 
             np.random.shuffle(seq)
@@ -1031,8 +1026,8 @@ class TSEnsemble:
         loss = list(loss / float(self.bags))
 
         np.random.seed(self.seed)
-        K.clear_session()
-        K.set_epsilon(self.epsilon)
+        tf.keras.backend.clear_session()
+        tf.keras.backend.set_epsilon(self.epsilon)
         tf.random.set_seed(self.seed)
 
         return loss
@@ -1495,17 +1490,17 @@ class TSEnsemble:
     def rnn_is_model(self, name: str) -> bool:
         return os.path.isfile(self.get_path('{}_model.json'.format(name)))
 
-    def rnn_save_model(self, model: Sequential, name: str) -> None:
+    def rnn_save_model(self, model: tf.keras.models.Sequential, name: str) -> None:
         content = model.to_json()
         with open(self.get_path('{}_model.json'.format(name)), 'w') as fh:
             fh.write(content)
         
         model.save_weights(self.get_path('{}_weights.h5'.format(name)))
 
-    def rnn_load_model(self, name: str) -> Sequential:
+    def rnn_load_model(self, name: str) -> tf.keras.models.Sequential:
         with open(self.get_path('{}_model.json'.format(name)), 'r') as fh:
             content = fh.read()
-        model = model_from_json(content)
+        model = tf.keras.models.model_from_json(content)
         
         model.load_weights(self.get_path('{}_weights.h5'.format(name)))
 

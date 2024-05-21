@@ -45,7 +45,7 @@ This model is especially useful for time series data that have complex relations
 
 Try the Jupyter notebook [`TSEnsemble.ipynb`](./TSEnsemble.ipynb) for a step-by-step guide on how to perform the training and forecasting using this model.
 
-You can also train and forecast this model by running the `ensemble.py` script.
+You can also train and forecast this model by running the [`ensemble.py`](./ensemble.py) script.
 
 ```bash
 python ensemble.py

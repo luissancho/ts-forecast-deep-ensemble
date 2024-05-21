@@ -43,7 +43,7 @@ This structured approach allows TSEnsemble to leverage the strengths of various 
 
 This model is especially useful for time series data that have complex relationship between variables, like financial forecasting. The ensemble model can be used to predict future values of a time series based on the past values, while also considering the relationships between different variables.
 
-Try the Jupyter notebook `TSEnsemble.ipynb` for a step-by-step guide on how to perform the training and forecasting using this model.
+Try the Jupyter notebook [`TSEnsemble.ipynb`](./TSEnsemble.ipynb) for a step-by-step guide on how to perform the training and forecasting using this model.
 
 You can also train and forecast this model by running the `ensemble.py` script.
 

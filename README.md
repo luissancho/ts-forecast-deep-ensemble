@@ -1,8 +1,6 @@
 # TSEnsemble
 
-## Project Description
-
-TSEnsemble is a time series forecasting ensemble model designed to provide robust predictions by combining the strengths of multiple forecasting learners. This project aims to improve forecast accuracy by leveraging the diversity of several underlying models.
+A time series forecasting ensemble model designed to provide robust predictions by combining the strengths of multiple forecasting learners. This project aims to improve forecast accuracy by leveraging the diversity of several underlying models.
 
 ![TSEnsemble](docs/ts-forecast-deep-ensemble.png)
 

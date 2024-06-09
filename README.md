@@ -1,8 +1,8 @@
-# TSEnsemble
+# Time Series Forecast Deep Ensemble
 
 A time series forecasting ensemble model designed to provide robust predictions by combining the strengths of multiple forecasting learners. This project aims to improve forecast accuracy by leveraging the diversity of several underlying models.
 
-![TSEnsemble](docs/ts-forecast-deep-ensemble.png)
+![Time Series Forecast Deep Ensemble](docs/ts-forecast-deep-ensemble.png)
 
 ## Features
 
@@ -12,7 +12,7 @@ A time series forecasting ensemble model designed to provide robust predictions 
 
 ## How does it work
 
-The TSEnsemble model operates through a systematic process of training and forecasting, which involves several key steps:
+The Time Series Forecast Deep Ensemble model operates through a systematic process of training and forecasting, which involves several key steps:
 
 ### Training Process
 
@@ -35,7 +35,7 @@ The ensemble model incorporates three distinct meta regressors by default, each 
 3. **Base Models Mean Forecasting**: Predictions are made by averaging the results of each base model configuration.
 4. **Meta Models Forecasting**: The predictions from the base models are then used as input to the meta models, which generate the final forecast.
 
-This structured approach allows TSEnsemble to leverage the strengths of various machine learning models, providing a robust and accurate forecasting tool.
+This structured approach allows this model to leverage the strengths of various machine learning models, providing a robust and accurate forecasting tool.
 
 ## Usage
 
@@ -61,8 +61,12 @@ We then evaluated the results of the ensemble model against the results of the b
 
 In this case, one of the meta models (Ridge Regression) was the best performing model, along with another meta model (XGBoost), which were both better than all the base models, including the average of them all.
 
-![TSEnsemble](docs/ts-forecast-deep-ensemble-scores.png)
+![Time Series Forecast Deep Ensemble](docs/ts-forecast-deep-ensemble-scores.png)
 
 ## Author
 
 This model was created by [Luis Sancho](https://github.com/luissancho).
+
+## Citation
+
+If you want to use or mention this code, please cite it according to [CITATION.cff](CITATION.cff).
